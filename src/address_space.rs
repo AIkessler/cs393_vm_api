@@ -7,6 +7,7 @@ pub const VADDR_MAX: usize = (1 << 38) - 1;
 
 type VirtualAddress = usize;
 
+#[derive(Clone)] // TODO: is this okay?
 struct MapEntry {
     source: Arc<dyn DataSource>,
     offset: usize,
@@ -120,7 +121,7 @@ impl AddressSpace {
         let new_mapping = MapEntry::new(source, offset, span, start, flags);
         self.mappings.push(new_mapping);
         self.mappings.sort_by(|a, b| a.addr.cmp(&b.addr));
-        return Ok(start);
+        Ok(start)
     }
 
     /// Remove the mapping to `DataSource` that starts at the given address.
@@ -131,11 +132,18 @@ impl AddressSpace {
     // if you point at the middle, you remove that function.
     ///If the source is different than what they say you should let the person know
     pub fn remove_mapping<D: DataSource>(
-        &self,
+        &mut self,
         source: Arc<D>,
         start: VirtualAddress,
     ) -> Result<(), &str> {
-        todo!()
+        for i in 0..self.mappings.len() {
+            if (self.mappings[i].addr + self.mappings[i].span) <= start {
+                self.mappings.remove(i);
+                Ok::<&str, ()>("Removed the mapping successfully");
+            }
+        }
+
+        return Err("No mapping at the given address.");
     }
 
     /// Look up the DataSource and offset within that DataSource for a
@@ -144,19 +152,35 @@ impl AddressSpace {
     /// # Errors
     /// If this VirtualAddress does not have a valid mapping in &self,
     /// or if this AccessType is not permitted by the mapping
-    pub fn get_source_for_addr<D: DataSource>(
+    ///
+    /// return which data source overlaps the address
+    /// figure out what the offset is in that datasource
+    /// if addr is 0x15, and the address that overlaps is at 0x10, then offset is 5
+    pub fn get_source_for_addr(
         &self,
         addr: VirtualAddress,
         access_type: FlagBuilder,
-    ) -> Result<(Arc<D>, usize), &str> {
-        todo!();
+    ) -> Result<(Arc<dyn DataSource>, usize), &str> {
+        let map_entry = self.get_mapping_for_addr(addr)?;
+        // check access type and error if not allowed
+
+        if access_type.check_access_perms(access_type) {
+            Err("AccessType not permitted by mapping.")
+        } else {
+            Ok((map_entry.source, addr - map_entry.addr))
+        }
     }
 
     /// Helper function for looking up mappings
     ///cd and ls file in folder xd
-
+    ///gets the mapping for the overlapping address source
+    ///
     fn get_mapping_for_addr(&self, addr: VirtualAddress) -> Result<MapEntry, &str> {
-        todo!();
+        self.mappings
+            .iter()
+            .find(|mapping| (mapping.addr..mapping.addr + mapping.span).contains(&addr))
+            .cloned()
+            .ok_or("No mapping at the requested address.")
     }
 }
 
