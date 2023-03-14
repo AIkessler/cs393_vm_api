@@ -12,12 +12,18 @@ struct MapEntry {
     offset: usize,
     span: usize,
     addr: usize,
-    flags: FlagBuilder
+    flags: FlagBuilder,
 }
 
 impl MapEntry {
     #[must_use] // <- not using return value of "new" doesn't make sense, so warn
-    pub fn new(source: Arc<dyn DataSource>, offset: usize, span: usize, addr: usize, flags: FlagBuilder) -> MapEntry {
+    pub fn new(
+        source: Arc<dyn DataSource>,
+        offset: usize,
+        span: usize,
+        addr: usize,
+        flags: FlagBuilder,
+    ) -> MapEntry {
         MapEntry {
             source: source.clone(),
             offset,
@@ -77,35 +83,53 @@ impl AddressSpace {
             }
             addr_iter = mapping.addr + mapping.span;
         }
-        if addr_iter + span + 2 * PAGE_SIZE < VADDR_MAX {
+
+        if addr_iter + span + 2 * PAGE_SIZE <= VADDR_MAX {
             let mapping_addr = addr_iter + PAGE_SIZE;
-            let new_mapping = MapEntry::new(source, offset, span, mapping_addr, flags);
-            self.mappings.push(new_mapping);
-            self.mappings.sort_by(|a, b| a.addr.cmp(&b.addr));
-            return Ok(mapping_addr);
+            self.add_mapping_at(source, offset, span, mapping_addr, flags)
+        } else {
+            Err("out of address space!")
         }
-        Err("out of address space!")
     }
 
     /// Add a mapping from `DataSource` into this `AddressSpace` starting at a specific address.
     ///
     /// # Errors
     /// If there is insufficient room subsequent to `start`.
+    /// check to see if there is enough space to place the mapping here
     pub fn add_mapping_at<D: DataSource + 'static>(
         &mut self,
         source: Arc<D>,
         offset: usize,
         span: usize,
         start: VirtualAddress,
-        flags: FlagBuilder
-    ) -> Result<(), &str> {
-        todo!()
+        flags: FlagBuilder,
+    ) -> Result<VirtualAddress, &str> {
+        if start + span > VADDR_MAX {
+            return Err("Requested address is outside the maximum range.");
+        }
+
+        let overlaps = |mapping: &MapEntry| {
+            !((mapping.addr + mapping.span) <= start || mapping.addr >= (start + span))
+        };
+
+        if self.mappings.iter().any(overlaps) {
+            return Err("No space at requested address.");
+        }
+
+        let new_mapping = MapEntry::new(source, offset, span, start, flags);
+        self.mappings.push(new_mapping);
+        self.mappings.sort_by(|a, b| a.addr.cmp(&b.addr));
+        return Ok(start);
     }
 
     /// Remove the mapping to `DataSource` that starts at the given address.
     ///
     /// # Errors
     /// If the mapping could not be removed.
+    //whatever is mapped at the virtual address you want ot remove it
+    // if you point at the middle, you remove that function.
+    ///If the source is different than what they say you should let the person know
     pub fn remove_mapping<D: DataSource>(
         &self,
         source: Arc<D>,
@@ -129,6 +153,8 @@ impl AddressSpace {
     }
 
     /// Helper function for looking up mappings
+    ///cd and ls file in folder xd
+
     fn get_mapping_for_addr(&self, addr: VirtualAddress) -> Result<MapEntry, &str> {
         todo!();
     }
@@ -160,17 +186,21 @@ pub struct FlagBuilder {
 
 impl FlagBuilder {
     pub fn check_access_perms(&self, access_perms: FlagBuilder) -> bool {
-        if access_perms.read && !self.read || access_perms.write && !self.write || access_perms.execute && !self.execute {
+        if access_perms.read && !self.read
+            || access_perms.write && !self.write
+            || access_perms.execute && !self.execute
+        {
             return false;
-        }    
-        true    
+        }
+        true
     }
 
     pub fn is_valid(&self) -> bool {
         if self.private && self.shared {
             return false;
         }
-        if self.cow && self.write { // for COW to work, write needs to be off until after the copy
+        if self.cow && self.write {
+            // for COW to work, write needs to be off until after the copy
             return false;
         }
         return true;
